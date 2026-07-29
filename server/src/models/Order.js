@@ -95,11 +95,28 @@ const orderSchema = new mongoose.Schema(
       required: true,
       default: 0,
     },
+
+    razorpayOrderId: {
+    type: String,
+    default: "",
+    },
+
+    razorpayPaymentId: {
+    type: String,
+    default: "",
+    },
+
+    razorpaySignature: {
+    type: String,
+    default: "",
+    },
   },
   {
     timestamps: true,
   }
 );
+
+
 
 const Order = mongoose.model("Order", orderSchema);
 

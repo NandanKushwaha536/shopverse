@@ -15,21 +15,23 @@ import {
 import { authMiddleware } from "../middleware/auth.middleware.js";
 
 import { adminMiddleware } from "../middleware/admin.middleware.js";
-
+import { validate } from "../middleware/validation.middleware.js";
+import { validateCreateProduct } from "../validators/product.validator.js";
 import upload from "../middleware/upload.middleware.js";
+
 
 const router = express.Router();
 
 
 // Create Product (Admin Only)
 router.post(
-  "/",
-  authMiddleware,
-  adminMiddleware,
-  upload.single("image"),
-  createProduct
+    "/",
+    authMiddleware,
+    adminMiddleware,
+    upload.single("image"),
+    validate(validateCreateProduct),
+    createProduct
 );
-
 // Get All Products
 router.get("/", getProducts);
 

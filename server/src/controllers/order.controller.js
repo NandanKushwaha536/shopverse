@@ -1,267 +1,136 @@
-import Order from "../models/Order.js";
-import Cart from "../models/Cart.js";
-import razorpay from "../config/razorpay.js";
-import crypto from "crypto";
+import { asyncHandler } from "../utils/asyncHandler.js";
+import ApiResponse from "../utils/ApiResponse.js";
+import {
+  placeOrderService,
+  getMyOrdersService,
+  getSingleOrderService,
+  getAllOrdersService,
+  updateOrderStatusService,
+  createRazorpayOrderService,
+  verifyPaymentService,
+  cancelOrderService,
+} from "../services/order.service.js";
+import { sendResponse } from "../utils/sendResponse.js";
+import { ORDER_MESSAGES } from "../constants/messages.js";
 
 // Place Order
-export const placeOrder = async (req, res) => {
-  try {
-    const { shippingAddress, paymentMethod } = req.body;
+export const placeOrder = asyncHandler(async (req, res) => {
+  const { shippingAddress, paymentMethod } = req.body;
 
-    // Get User Cart
-    const cart = await Cart.findOne({
-      user: req.user._id,
-    }).populate("items.product");
+  const order = await placeOrderService(
+    req.user._id,
+    shippingAddress,
+    paymentMethod
+  );
 
-    if (!cart || cart.items.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Cart is empty",
-      });
-    }
-
-    // Prepare Order Items
-    const orderItems = cart.items.map((item) => ({
-      product: item.product._id,
-      quantity: item.quantity,
-      price: item.product.price,
-    }));
-
-    // Create Order
-    const order = await Order.create({
-      user: req.user._id,
-      orderItems,
-      shippingAddress,
-      paymentMethod,
-      totalPrice: cart.totalPrice,
-    });
-
-    // Clear Cart
-    cart.items = [];
-    cart.totalPrice = 0;
-
-    await cart.save();
-
-    res.status(201).json({
-      success: true,
-      message: "Order placed successfully",
+  return sendResponse(
+      res,
+      201,
       order,
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
-};
+      ORDER_MESSAGES.CREATED
+    );
+});
 
 // Get My Orders
-export const getMyOrders = async (req, res) => {
-  try {
-    const orders = await Order.find({
-      user: req.user._id,
-    })
-      .populate("orderItems.product")
-      .sort({ createdAt: -1 });
+export const getMyOrders = asyncHandler(async (req, res) => {
+  const orders = await getMyOrdersService(req.user._id);
 
-    res.status(200).json({
-      success: true,
-      orders,
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
-};
-
+  return sendResponse(
+    res,
+    200,
+    orders,
+    ORDER_MESSAGES.ORDERS_FETCHED
+  );
+});
 
 // Get Single Order
-export const getSingleOrder = async (req, res) => {
-  try {
-    const { orderId } = req.params;
+export const getSingleOrder = asyncHandler(async (req, res) => {
+  const order = await getSingleOrderService(
+    req.params.orderId,
+    req.user._id,
+    req.user.role
+  );
 
-    const order = await Order.findById(orderId)
-      .populate("user", "name email")
-      .populate("orderItems.product");
-
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: "Order not found",
-      });
-    }
-
-    // User केवल अपना order देख सके
-    if (
-      order.user._id.toString() !== req.user._id.toString() &&
-      req.user.role !== "admin"
-    ) {
-      return res.status(403).json({
-        success: false,
-        message: "Access denied",
-      });
-    }
-
-    res.status(200).json({
-      success: true,
+   return sendResponse(
+      res,
+      200,
       order,
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
-};
+      ORDER_MESSAGES.FETCHED
+    );
+});
 
 // Admin - Get All Orders
-export const getAllOrders = async (req, res) => {
-  try {
-    const orders = await Order.find()
-      .populate("user", "name email")
-      .populate("orderItems.product")
-      .sort({ createdAt: -1 });
+export const getAllOrders = asyncHandler(async (req, res) => {
+  const data = await getAllOrdersService();
 
-    res.status(200).json({
-      success: true,
-      totalOrders: orders.length,
-      orders,
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
-};
-
+   return sendResponse(
+      res,
+      200,
+      order,
+      ORDER_MESSAGES.ALLORDER
+    );
+});
 // Admin - Update Order Status
-export const updateOrderStatus = async (req, res) => {
-  try {
-    const { orderId } = req.params;
-    const { orderStatus } = req.body;
+export const updateOrderStatus = asyncHandler(async (req, res) => {
+  const order = await updateOrderStatusService(
+    req.params.orderId,
+    req.body.orderStatus
+  );
 
-    const order = await Order.findById(orderId);
-
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: "Order not found",
-      });
-    }
-
-    order.orderStatus = orderStatus;
-
-    // Payment Status Update
-    if (orderStatus === "Delivered") {
-      order.paymentStatus =
-        order.paymentMethod === "COD" ? "Paid" : order.paymentStatus;
-    }
-
-    await order.save();
-
-    res.status(200).json({
-      success: true,
-      message: "Order status updated successfully",
+   return sendResponse(
+      res,
+      200,
       order,
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
-};
+      ORDER_MESSAGES. UPDATED
+    );
+});
 
-export const createRazorpayOrder = async (req, res) => {
-  try {
-    const { orderId } = req.params;
+export const createRazorpayOrder = asyncHandler(async (req, res) => {
+  const razorpayOrder = await createRazorpayOrderService(
+    req.params.orderId
+  );
 
-    const order = await Order.findById(orderId);
+  return sendResponse(
+    res,
+    200,
+    razorpayOrder,
+    ORDER_MESSAGES.RAZORPAY_ORDER_CREATED
+  );
+});
 
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: "Order not found",
-      });
-    }
 
-    const options = {
-      amount: order.totalPrice * 100, // paise
-      currency: "INR",
-      receipt: order._id.toString(),
-    };
+export const verifyPayment = asyncHandler(async (req, res) => {
+  const {
+    razorpay_order_id,
+    razorpay_payment_id,
+    razorpay_signature,
+  } = req.body;
 
-    const razorpayOrder = await razorpay.orders.create(options);
+  const order = await verifyPaymentService(
+    razorpay_order_id,
+    razorpay_payment_id,
+    razorpay_signature
+  );
 
-    order.razorpayOrderId = razorpayOrder.id;
-    await order.save();
-
-    res.status(200).json({
-      success: true,
-      razorpayOrder,
-    });
-
-  } catch (error) {
-  console.error(error);
-
-  res.status(500).json({
-    success: false,
-    message: error.message,
-    error,
-  });
-    }
-};
-
-export const verifyPayment = async (req, res) => {
-  try {
-    const {
-      razorpay_order_id,
-      razorpay_payment_id,
-      razorpay_signature,
-    } = req.body;
-
-    const generatedSignature = crypto
-      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
-      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
-      .digest("hex");
-
-    if (generatedSignature !== razorpay_signature) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid payment signature",
-      });
-    }
-
-    const order = await Order.findOne({
-      razorpayOrderId: razorpay_order_id,
-    });
-
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: "Order not found",
-      });
-    }
-
-    order.paymentStatus = "Paid";
-    order.razorpayPaymentId = razorpay_payment_id;
-    order.razorpaySignature = razorpay_signature;
-
-    await order.save();
-
-    res.status(200).json({
-      success: true,
-      message: "Payment verified successfully",
+   return sendResponse(
+      res,
+       200,
       order,
-    });
+      ORDER_MESSAGES.RAZORPAY_ORDER_VERIFIED
+    );
+});
 
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
-};
+
+export const cancelOrder = asyncHandler(async (req, res) => {
+  const order = await cancelOrderService(
+    req.params.orderId,
+    req.user._id
+  );
+
+   return sendResponse(
+      res,
+      200,
+      order,
+      ORDER_MESSAGES.CANCELLED
+    );
+});

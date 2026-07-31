@@ -1,106 +1,51 @@
-import User from "../models/User.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
+import ApiResponse from "../utils/ApiResponse.js";
 
-export const register = async (req, res) => {
-  try {
-    const { name, email, password } = req.body;
+import {
+  registerService,
+  loginService,
+  getProfileService,
+} from "../services/auth.service.js";
 
-    // Check if user already exists
-    const existingUser = await User.findOne({ email });
-
-    if (existingUser) {
-      return res.status(400).json({
-        success: false,
-        message: "Email already registered",
-      });
-    }
-
-    // Create new user
-    const user = await User.create({
-      name,
-      email,
-      password,
-    });
-
-    // Generate JWT
-    const token = user.generateToken();
-
-    res.status(201).json({
-      success: true,
-      message: "User registered successfully",
-      token,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-      },
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
-};
+import { AUTH_MESSAGES } from "../constants/messages.js";
+import { sendResponse } from "../utils/sendResponse.js";
 
 
-export const login = async (req, res) => {
-  try {
-    const { email, password } = req.body;
+export const register = asyncHandler(async (req, res) => {
+  const { name, email, password } = req.body;
 
-    // Find user with password
-    const user = await User.findOne({ email }).select("+password");
+  const data = await registerService(name, email, password);
 
-    if (!user) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid email or password",
-      });
-    }
+  return sendResponse(
+    res,
+    201,
+    data,
+    AUTH_MESSAGES.REGISTER_SUCCESS
+  );
+});
 
-    // Check password
-    const isPasswordMatch = await user.comparePassword(password);
+export const login = asyncHandler(async (req, res) => {
+  const { email, password } = req.body;
 
-    if (!isPasswordMatch) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid email or password",
-      });
-    }
+  const data = await loginService(email, password);
 
-    // Generate Token
-    const token = user.generateToken();
+  return sendResponse(
+    res,
+    200,
+    data,
+    AUTH_MESSAGES.LOGIN_SUCCESS
+  );
+});
 
-    res.status(200).json({
-      success: true,
-      message: "Login successful",
-      token,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-      },
-    });
 
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
-};
+export const getProfile = asyncHandler(async (req, res) => {
+  const user = await getProfileService(req.user);
 
-export const getProfile = async (req, res) => {
-  try {
-    res.status(200).json({
-      success: true,
-      user: req.user,
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
-};
+  return sendResponse(
+    res,
+    200,
+    user,
+    AUTH_MESSAGES.PROFILE_FETCHED
+  );
+});
+

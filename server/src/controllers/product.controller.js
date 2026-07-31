@@ -1,463 +1,303 @@
 import Product from "../models/Product.js";
 import cloudinary from "../config/cloudinary.js";
 import { uploadToCloudinary } from "../utils/cloudinaryUpload.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
+import ApiResponse from "../utils/ApiResponse.js";
+import ApiError from "../utils/ApiError.js";
+import { getAllProductsService } from "../services/product.service.js";
+import { validateCreateProduct } from "../validators/product.validator.js";
+import { calculateDiscount } from "../utils/calculateDiscount.js";
+import { deleteCloudinaryImage } from "../utils/deleteCloudinaryImage.js";
+import { generateSlug } from "../utils/generateSlug.js";
+import { calculateRatings } from "../utils/calculateRatings.js";
 
 // Create Product
-export const createProduct = async (req, res) => {
-  try {
-    const {
-      name,
-      description,
-      brand,
-      originalPrice,
-      discount,
-      category,
-      stock,
-} = req.body;
+export const createProduct = asyncHandler(async (req, res) => {
+  const {
+    name,
+    description,
+    brand,
+    originalPrice,
+    discount,
+    category,
+    stock,
+  } = req.body;
+
   let image = {
-      url: "",
-      public_id: "",
+    url: "",
+    public_id: "",
+  };
+
+  // Upload image to Cloudinary
+  if (req.file) {
+    const result = await uploadToCloudinary(req.file.buffer);
+
+    image = {
+      url: result.secure_url,
+      public_id: result.public_id,
     };
+  }
 
-    if (req.file) {
-      const result = await uploadToCloudinary(req.file.buffer);
+  // Calculate final price
+  const finalPrice = calculateDiscount(originalPrice, discount);
 
-      image = {
-        url: result.secure_url,
-        public_id: result.public_id,
-      };
-    }
+  // Create Product
+  const product = await Product.create({
+    name,
+    slug: generateSlug(name),
+    description,
+    brand,
+    originalPrice,
+    discount,
+    price: finalPrice,
+    category,
+    image,
+    stock,
+    createdBy: req.user._id,
+  });
 
-    const finalPrice =
-     originalPrice - (originalPrice * (discount || 0)) / 100;
-
-    const product = await Product.create({
-        name,
-        description,
-        brand,
-        originalPrice,
-        discount,
-        price: finalPrice,
-        category,
-        image,
-        stock,
-        createdBy: req.user._id,
-      });
-    res.status(201).json({
-      success: true,
-      message: "Product created successfully",
+  return res.status(201).json(
+    new ApiResponse(
+      201,
       product,
-    });
-
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
-};
-
-
+      "Product created successfully"
+    )
+  );
+});
 // Get All Products
-export const getProducts = async (req, res) => {
-  try {
-    const {
-      keyword,
-      category,
-      minPrice,
-      maxPrice,
-      sort,
-      page = 1,
-      limit = 8,
-    } = req.query;
+export const getProducts = asyncHandler(async (req, res) => {
 
-    const query = {};
+    const data = await getAllProductsService(req.query);
 
-    // Search
-    if (keyword) {
-      query.name = {
-        $regex: keyword,
-        $options: "i",
-      };
-    }
-
-
-    // Category Filter
-    if (category) {
-      query.category = category;
-    }
-
-    if (req.query.brand) {
-      query.brand = req.query.brand;
-    }
-
-    // Price Filter
-    if (minPrice || maxPrice) {
-      query.price = {};
-
-      if (minPrice) {
-        query.price.$gte = Number(minPrice);
-      }
-
-      if (maxPrice) {
-        query.price.$lte = Number(maxPrice);
-      }
-    }
-
-    let productsQuery = Product.find(query);
-
-    // Sorting
-    if (sort === "price_asc") {
-      productsQuery = productsQuery.sort({ price: 1 });
-    } else if (sort === "price_desc") {
-      productsQuery = productsQuery.sort({ price: -1 });
-    } else if (sort === "newest") {
-      productsQuery = productsQuery.sort({ createdAt: -1 });
-    }
-
-    // Pagination
-    const skip = (Number(page) - 1) * Number(limit);
-
-    productsQuery = productsQuery
-      .skip(skip)
-      .limit(Number(limit));
-
-    const products = await productsQuery;
-
-    const totalProducts = await Product.countDocuments(query);
-
-    res.status(200).json({
-      success: true,
-      totalProducts,
-      currentPage: Number(page),
-      totalPages: Math.ceil(totalProducts / Number(limit)),
-      products,
-    });
-
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
-};
+    return res.status(200).json(
+        new ApiResponse(
+            200,
+            data,
+            "Products fetched successfully"
+        )
+    );
+});
 
 // Get Single Product
-export const getSingleProduct = async (req, res) => {
-  try {
-    const product = await Product.findById(req.params.id);
+export const getSingleProduct = asyncHandler(async (req, res) => {
+  const product = await Product.findById(req.params.id);
 
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: "Product not found",
-      });
-    }
-
-    res.status(200).json({
-      success: true,
-      product,
-    });
-
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
+  if (!product) {
+    throw new ApiError(404, "Product not found");
   }
-};
+
+  return res.status(200).json(
+    new ApiResponse(
+      200,
+      product,
+      "Product fetched successfully"
+    )
+  );
+});
 
 // Update Product
 
-export const updateProduct = async (req, res) => {
-  try {
-    // Find Product
-    const product = await Product.findById(req.params.id);
+export const updateProduct = asyncHandler(async (req, res) => {
+  // Find Product
+  const product = await Product.findById(req.params.id);
 
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: "Product not found",
-      });
-    }
-
-    
-    // Update Basic Details
-    
-    product.name = req.body.name ?? product.name;
-    product.description = req.body.description ?? product.description;
-    product.brand = req.body.brand ?? product.brand;
-    product.category = req.body.category ?? product.category;
-    product.stock = req.body.stock ?? product.stock;
-
-    
-    // Update Pricing
-    
-    product.originalPrice =
-      req.body.originalPrice ?? product.originalPrice;
-
-    product.discount =
-      req.body.discount ?? product.discount;
-
-    // Prevent Invalid Discount
-    if (product.discount < 0 || product.discount > 100) {
-      return res.status(400).json({
-        success: false,
-        message: "Discount must be between 0 and 100",
-      });
-    }
-
-    // Calculate Final Price
-    product.price =
-      product.originalPrice -
-      (product.originalPrice * product.discount) / 100;
-
-    // Round Price (Optional)
-    product.price = Math.round(product.price);
-
-   
-    // Update Product Image
-  
-
-    if (req.file) {
-      // Delete Old Image
-      if (product.image?.public_id) {
-        await cloudinary.uploader.destroy(product.image.public_id);
-      }
-
-      // Upload New Image
-      const result = await uploadToCloudinary(req.file.buffer);
-
-      product.image = {
-        url: result.secure_url,
-        public_id: result.public_id,
-      };
-    }
-
-    // Save Product
-    await product.save();
-
-    res.status(200).json({
-      success: true,
-      message: "Product updated successfully",
-      product,
-    });
-
-  } catch (error) {
-    console.error("Update Product Error:", error);
-
-    res.status(500).json({
-      success: false,
-      message: "Failed to update product",
-      error: error.message,
-    });
+  if (!product) {
+    throw new ApiError(404, "Product not found");
   }
-};
 
+  // Update Basic Details
+  product.name = req.body.name ?? product.name;
+  if (req.body.name) {
+  product.slug = generateSlug(req.body.name);
+}
+  product.description = req.body.description ?? product.description;
+  product.brand = req.body.brand ?? product.brand;
+  product.category = req.body.category ?? product.category;
+  product.stock = req.body.stock ?? product.stock;
 
-// Delete Product
-export const deleteProduct = async (req, res) => {
-  try {
-    const product = await Product.findById(req.params.id);
+  // Update Pricing
+  product.originalPrice =
+    req.body.originalPrice ?? product.originalPrice;
 
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: "Product not found",
-      });
-    }
+  product.discount =
+    req.body.discount ?? product.discount;
 
-    // Delete image from Cloudinary
-    if (product.image.public_id) {
-      await cloudinary.uploader.destroy(product.image.public_id);
-    }
-
-    // Delete product
-    await product.deleteOne();
-
-    res.status(200).json({
-      success: true,
-      message: "Product deleted successfully",
-    });
-
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
+  // Validate Discount
+  if (product.discount < 0 || product.discount > 100) {
+    throw new ApiError(400, "Discount must be between 0 and 100");
   }
-};
 
+  // Calculate Final Price
+  product.price = Math.round(
+    calculateDiscount(product.originalPrice, product.discount)
+  );
 
-export const createReview = async (req, res) => {
-  try {
-    const { rating, comment } = req.body;
+  // Update Product Image
+  if (req.file) {
+    await deleteCloudinaryImage(product.image.public_id);
 
-    const product = await Product.findById(req.params.id);
+    const result = await uploadToCloudinary(req.file.buffer);
 
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: "Product not found",
-      });
-    }
-
-    // Check if user already reviewed
-    const alreadyReviewed = product.reviews.find(
-      (review) => review.user.toString() === req.user._id.toString()
-    );
-
-    if (alreadyReviewed) {
-      return res.status(400).json({
-        success: false,
-        message: "You have already reviewed this product",
-      });
-    }
-
-    // Create Review
-    const review = {
-      user: req.user._id,
-      name: req.user.name,
-      rating: Number(rating),
-      comment,
+    product.image = {
+      url: result.secure_url,
+      public_id: result.public_id,
     };
+  }
 
-    product.reviews.push(review);
+  // Save Product
+  await product.save();
 
-    product.numOfReviews = product.reviews.length;
-
-    // Calculate Average Rating
-    product.ratings =
-      product.reviews.reduce((acc, item) => acc + item.rating, 0) /
-      product.reviews.length;
-
-    await product.save();
-
-    res.status(201).json({
-      success: true,
-      message: "Review added successfully",
+  return res.status(200).json(
+    new ApiResponse(
+      200,
       product,
-    });
+      "Product updated successfully"
+    )
+  );
+});
 
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
+
+export const deleteProduct = asyncHandler(async (req, res) => {
+  // Find Product
+  const product = await Product.findById(req.params.id);
+
+  if (!product) {
+    throw new ApiError(404, "Product not found");
   }
-};
 
-export const getProductReviews = async (req, res) => {
-  try {
-    const product = await Product.findById(req.params.id);
+  // Delete Image
+  await deleteCloudinaryImage(product.image.public_id);
 
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: "Product not found",
-      });
-    }
+  // Delete Product
+  await product.deleteOne();
 
-    res.status(200).json({
-      success: true,
-      reviews: product.reviews,
-      numOfReviews: product.numOfReviews,
-      ratings: product.ratings,
-    });
+  return res.status(200).json(
+    new ApiResponse(
+      200,
+      null,
+      "Product deleted successfully"
+    )
+  );
+});
 
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
+
+
+export const createReview = asyncHandler(async (req, res) => {
+  const { rating, comment } = req.body;
+
+  const product = await Product.findById(req.params.id);
+
+  if (!product) {
+    throw new ApiError(404, "Product not found");
   }
-};
 
-export const updateReview = async (req, res) => {
-  try {
-    const { rating, comment } = req.body;
+  const alreadyReviewed = product.reviews.find(
+    (review) => review.user.toString() === req.user._id.toString()
+  );
 
-    const product = await Product.findById(req.params.id);
+  if (alreadyReviewed) {
+    throw new ApiError(400, "You have already reviewed this product");
+  }
 
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: "Product not found",
-      });
-    }
+  const review = {
+    user: req.user._id,
+    name: req.user.name,
+    rating: Number(rating),
+    comment,
+  };
 
-    const review = product.reviews.find(
-      (r) => r.user.toString() === req.user._id.toString()
-    );
+  product.reviews.push(review);
 
-    if (!review) {
-      return res.status(404).json({
-        success: false,
-        message: "Review not found",
-      });
-    }
+  product.numOfReviews = product.reviews.length;
 
-    review.rating = Number(rating);
-    review.comment = comment;
+  product.ratings = calculateRatings(product.reviews);
 
-    product.ratings =
-      product.reviews.reduce((acc, item) => acc + item.rating, 0) /
-      product.reviews.length;
+  await product.save();
 
-    await product.save();
-
-    res.status(200).json({
-      success: true,
-      message: "Review updated successfully",
+  return res.status(201).json(
+    new ApiResponse(
+      201,
       product,
-    });
+      "Review added successfully"
+    )
+  );
+});
 
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
+export const getProductReviews = asyncHandler(async (req, res) => {
+  const product = await Product.findById(req.params.id);
+
+  if (!product) {
+    throw new ApiError(404, "Product not found");
   }
-};
 
-export const deleteReview = async (req, res) => {
-  try {
-    const product = await Product.findById(req.params.id);
+  return res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        reviews: product.reviews,
+        numOfReviews: product.numOfReviews,
+        ratings: product.ratings,
+      },
+      "Reviews fetched successfully"
+    )
+  );
+});
 
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: "Product not found",
-      });
-    }
+export const updateReview = asyncHandler(async (req, res) => {
+  const { rating, comment } = req.body;
 
-    const reviews = product.reviews.filter(
-      (review) => review.user.toString() !== req.user._id.toString()
-    );
+  const product = await Product.findById(req.params.id);
 
-    product.reviews = reviews;
-    product.numOfReviews = reviews.length;
+  if (!product) {
+    throw new ApiError(404, "Product not found");
+  }
 
-    if (reviews.length === 0) {
-      product.ratings = 0;
-    } else {
-      product.ratings =
-        reviews.reduce((acc, item) => acc + item.rating, 0) /
-        reviews.length;
-    }
+  const review = product.reviews.find(
+    (r) => r.user.toString() === req.user._id.toString()
+  );
 
-    await product.save();
+  if (!review) {
+    throw new ApiError(404, "Review not found");
+  }
 
-    res.status(200).json({
-      success: true,
-      message: "Review deleted successfully",
+  review.rating = Number(rating);
+  review.comment = comment;
+
+  product.ratings = calculateRatings(product.reviews);
+
+  await product.save();
+
+  return res.status(200).json(
+    new ApiResponse(
+      200,
       product,
-    });
+      "Review updated successfully"
+    )
+  );
+});
 
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
+export const deleteReview = asyncHandler(async (req, res) => {
+  const product = await Product.findById(req.params.id);
+
+  if (!product) {
+    throw new ApiError(404, "Product not found");
   }
-};
+
+  const reviews = product.reviews.filter(
+    (review) => review.user.toString() !== req.user._id.toString()
+  );
+
+  product.reviews = reviews;
+  product.numOfReviews = reviews.length;
+  product.ratings = calculateRatings(reviews);
+
+  await product.save();
+
+  return res.status(200).json(
+    new ApiResponse(
+      200,
+      product,
+      "Review deleted successfully"
+    )
+  );
+});
